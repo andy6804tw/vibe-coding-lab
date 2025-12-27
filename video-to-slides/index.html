@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NotebookLM 影片摘要轉簡報截圖工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.0/FileSaver.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+                    },
+                    colors: {
+                        primary: { 50: '#eef2ff', 100: '#e0e7ff', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca' },
+                        secondary: { 500: '#ec4899', 600: '#db2777' }
+                    },
+                    animation: {
+                        'fade-in-up': 'fadeInUp 0.8s ease-out forwards',
+                    },
+                    keyframes: {
+                        fadeInUp: {
+                            '0%': { opacity: '0', transform: 'translateY(20px)' },
+                            '100%': { opacity: '1', transform: 'translateY(0)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background-color: #f8fafc;
+            /* 背景裝飾：動態漸層光暈 */
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 0%, rgba(236, 72, 153, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(14, 165, 233, 0.1) 0px, transparent 50%);
+            background-attachment: fixed;
+        }
+
+        /* 玻璃擬態卡片 */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+        }
+
+        /* 漸層文字 */
+        .text-gradient {
+            background: linear-gradient(135deg, #4f46e5 0%, #ec4899 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* 捲軸美化 */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        /* 投影片卡片動畫 */
+        .slide-card {
+            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .slide-card:hover {
+            transform: translateY(-5px) scale(1.02);
+            box-shadow: 0 20px 25px -5px rgba(79, 70, 229, 0.1), 0 8px 10px -6px rgba(79, 70, 229, 0.1);
+        }
+        .slide-card.selected {
+            ring-width: 3px;
+            ring-color: #6366f1;
+            border-color: transparent;
+        }
+
+        /* 按鈕基礎樣式 */
+        .btn-base {
+            transition: all 0.2s ease;
+        }
+        .btn-base:active { transform: scale(0.97); }
+
+        /* 拖放區域的啟動狀態樣式 */
+        .drag-active {
+            border-color: #6366f1 !important; /* indigo-500 */
+            background-color: rgba(238, 242, 255, 0.8) !important; /* indigo-50 */
+            transform: scale(1.02);
+        }
+
+        /* 載入動畫 */
+        .spinner {
+            width: 16px; height: 16px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: currentColor;
+            animation: spin 1s ease-in-out infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="text-slate-600 min-h-screen flex flex-col">
+
+    <nav class="sticky top-0 z-40 w-full glass-panel border-b border-white/40 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-pink-500 flex items-center justify-center text-white shadow-lg shadow-indigo-500/30">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                    </div>
+                    <span class="font-bold text-xl tracking-tight text-slate-800">NotebookLM <span class="text-gradient">Tools</span></span>
+                </div>
+                
+                <div id="lang-switcher" class="flex bg-slate-100/50 p-1 rounded-full border border-slate-200/50">
+                    <button data-lang="zh" class="px-4 py-1.5 rounded-full text-xs font-bold transition-all bg-white text-indigo-600 shadow-sm">中文</button>
+                    <button data-lang="en" class="px-4 py-1.5 rounded-full text-xs font-bold transition-all text-slate-500 hover:text-indigo-500">EN</button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="flex-grow w-full max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+        
+        <header class="text-center mb-10 mt-4 animate-fade-in-up">
+            <h1 data-key="title" class="text-4xl sm:text-5xl font-extrabold text-slate-900 mb-4 tracking-tight">
+                NotebookLM <span class="text-gradient">影片摘要轉簡報</span>
+            </h1>
+            <p data-key="subtitle" class="text-lg sm:text-xl text-slate-500 max-w-2xl mx-auto leading-relaxed">
+                專為 AI 筆記設計。自動過濾重複畫面，一鍵擷取最清晰的簡報截圖，完美搭配 NotebookLM 使用。
+            </p>
+        </header>
+
+        <div id="app" class="relative">
+            
+            <div id="upload-section" class="transition-all duration-500 transform hover:scale-[1.005] mb-16">
+                <div id="upload-dropzone" class="glass-panel rounded-3xl p-1 border-2 border-dashed border-indigo-200 hover:border-indigo-400 transition-all cursor-pointer group shadow-xl shadow-indigo-100/50" onclick="document.getElementById('video-upload').click()">
+                    <div class="bg-gradient-to-b from-white to-indigo-50/50 rounded-[1.3rem] p-12 text-center h-full flex flex-col items-center justify-center pointer-events-none">
+                        <div class="w-20 h-20 bg-white rounded-2xl shadow-lg shadow-indigo-200/50 flex items-center justify-center mb-6 group-hover:-translate-y-2 transition-transform duration-300">
+                            <svg class="w-10 h-10 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                        </div>
+                        <h3 data-key="dropzoneTitle" class="text-2xl font-bold text-slate-800 mb-3">點擊或拖放影片檔案</h3>
+                        <p data-key="dropzoneSubtitle" class="text-slate-500 mb-8 font-medium">支援 MP4, MOV, WebM (建議 < 500MB)</p>
+                        
+                        <div class="bg-gradient-to-r from-indigo-600 to-pink-500 text-white font-bold py-3 px-8 rounded-full shadow-lg shadow-indigo-500/30 group-hover:shadow-indigo-500/50 transition-all btn-base">
+                            <span data-key="selectVideoBtn">開始處理</span>
+                        </div>
+                        <input type="file" id="video-upload" class="hidden" accept="video/*">
+                    </div>
+                </div>
+            </div>
+
+            <div id="guide-section" class="mb-16 animate-fade-in-up" style="animation-delay: 0.1s;">
+                <h2 class="text-center text-slate-400 text-sm font-bold uppercase tracking-widest mb-8" data-key="guideTitle">使用說明</h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-16">
+                    <div class="glass-panel p-6 rounded-2xl text-center hover:bg-white/80 transition-colors">
+                        <div class="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center mx-auto mb-4 text-xl font-bold">1</div>
+                        <h3 class="font-bold text-slate-800 mb-2" data-key="step1Title">上傳影片</h3>
+                        <p class="text-sm text-slate-500" data-key="step1Desc">選擇您的課程或演講影片，系統將在本地端處理，不會上傳伺服器。</p>
+                    </div>
+                    <div class="glass-panel p-6 rounded-2xl text-center hover:bg-white/80 transition-colors">
+                        <div class="w-12 h-12 bg-pink-100 text-pink-600 rounded-xl flex items-center justify-center mx-auto mb-4 text-xl font-bold">2</div>
+                        <h3 class="font-bold text-slate-800 mb-2" data-key="step2Title">智能擷取</h3>
+                        <p class="text-sm text-slate-500" data-key="step2Desc">演算法自動偵測並過濾重複畫面，只保留關鍵投影片。</p>
+                    </div>
+                    <div class="glass-panel p-6 rounded-2xl text-center hover:bg-white/80 transition-colors">
+                        <div class="w-12 h-12 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center mx-auto mb-4 text-xl font-bold">3</div>
+                        <h3 class="font-bold text-slate-800 mb-2" data-key="step3Title">一鍵匯出</h3>
+                        <p class="text-sm text-slate-500" data-key="step3Desc">支援匯出圖片包 (ZIP)、PDF 文件或 PowerPoint 簡報。</p>
+                    </div>
+                </div>
+
+                <div class="relative max-w-5xl mx-auto px-4">
+                    <img id="demo-image" 
+                         src="./images/demo-zh.png" 
+                         alt="App Interface Demo" 
+                         class="relative rounded-2xl shadow-2xl border border-slate-200/50 w-full"
+                         onerror="this.style.display='none'"> 
+                         
+                    <p class="text-center text-slate-400 text-xs mt-6 font-medium tracking-wide">
+                        <span data-key="demoCaption">實際操作畫面預覽</span>
+                    </p>
+                </div>
+            </div>
+
+            <div id="processing-section" class="hidden text-center py-20">
+                <div class="relative w-32 h-32 mx-auto mb-8">
+                    <div class="absolute inset-0 bg-indigo-500 blur-xl opacity-20 rounded-full animate-pulse"></div>
+                    <svg class="relative w-full h-full text-indigo-100" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none"></circle></svg>
+                    <svg class="absolute inset-0 w-full h-full -rotate-90 text-indigo-600 drop-shadow-lg" viewBox="0 0 24 24">
+                        <circle id="progress-ring" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="62.83" stroke-dashoffset="62.83" stroke-linecap="round" class="transition-all duration-300"></circle>
+                    </svg>
+                    <div class="absolute inset-0 flex items-center justify-center flex-col">
+                        <span class="text-3xl font-bold text-slate-800" id="progress-percent">0%</span>
+                    </div>
+                </div>
+                <h2 data-key="processingTitle" class="text-3xl font-bold text-slate-800 mb-3">AI 正在分析影格...</h2>
+                <p id="progress-text" class="text-slate-500 font-medium font-mono text-lg text-indigo-600">(準備開始擷取...)</p>
+            </div>
+
+            <div id="results-section" class="hidden animate-fade-in">
+                <div class="glass-panel rounded-2xl p-4 mb-8 sticky top-20 z-30 shadow-lg shadow-slate-200/50">
+                    <div class="flex flex-col xl:flex-row justify-between items-center gap-4">
+                        <div class="flex items-center gap-4 w-full xl:w-auto">
+                            <div class="bg-indigo-50 text-indigo-700 px-4 py-2 rounded-lg font-bold text-sm border border-indigo-100 flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                                <span id="selection-counter">已選取 0 張</span>
+                            </div>
+                            <div class="h-6 w-px bg-slate-200"></div>
+                            <button id="select-all-btn" class="text-sm font-semibold text-slate-600 hover:text-indigo-600 transition-colors">全選</button>
+                            <button id="reset-btn" class="text-sm font-semibold text-red-400 hover:text-red-600 transition-colors ml-2" data-key="resetBtn">重置</button>
+                        </div>
+
+                        <div class="flex flex-wrap gap-3 w-full xl:w-auto justify-end">
+                            
+                            <button id="download-zip-btn" class="btn-base flex-1 xl:flex-none flex items-center justify-center gap-2 bg-white border border-indigo-200 hover:border-indigo-400 hover:bg-indigo-50 text-indigo-700 py-2.5 px-5 rounded-xl font-bold shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                                <span data-key="downloadZip">下載圖片包 (ZIP)</span>
+                            </button>
+                            
+                            <button id="download-pdf-btn" class="btn-base flex-1 xl:flex-none flex items-center justify-center gap-2 bg-white border border-pink-200 hover:border-pink-400 hover:bg-pink-50 text-pink-700 py-2.5 px-5 rounded-xl font-bold shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
+                                <span data-key="downloadPdf">下載 PDF 文件</span>
+                            </button>
+
+                            <button id="download-pptx-btn" class="btn-base flex-1 xl:flex-none flex items-center justify-center gap-2 bg-white border border-orange-200 hover:border-orange-400 hover:bg-orange-50 text-orange-600 py-2.5 px-5 rounded-xl font-bold shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"></path></svg>
+                                <span data-key="downloadPptx">下載簡報 (PPTX)</span>
+                            </button>
+                            
+                        </div>
+                    </div>
+                </div>
+
+                <div id="slides-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-6 pb-20"></div>
+            </div>
+        </div>
+
+        <video id="video-processor" class="hidden" crossOrigin="anonymous"></video>
+        <canvas id="canvas-processor" class="hidden"></canvas>
+    </main>
+
+    <footer class="mt-auto py-8 text-center text-slate-400 text-sm font-medium">
+        <div class="flex flex-col md:flex-row items-center justify-center gap-4">
+            <p>&copy; 2025 NotebookLM Tools.</p>
+            
+            <span class="hidden md:inline-block w-1 h-1 rounded-full bg-slate-300"></span>
+            
+            <a href="https://github.com/andy6804tw" 
+               target="_blank" 
+               rel="noopener noreferrer" 
+               class="flex items-center gap-2 hover:text-indigo-600 transition-colors duration-300 group"
+               title="Visit my GitHub">
+                
+                <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                </svg>
+                
+                <span class="group-hover:underline">andy6804tw</span>
+            </a>
+        </div>
+    </footer>
+
+    <div id="notification-banner" class="hidden fixed top-6 left-1/2 transform -translate-x-1/2 bg-slate-900/90 backdrop-blur-md text-white py-3 px-6 rounded-full shadow-2xl z-50 flex items-center gap-3 transition-all duration-300 translate-y-[-100%]">
+        <div id="notif-icon" class="w-2 h-2 rounded-full bg-green-400"></div>
+        <p id="notification-message" class="font-medium text-sm"></p>
+    </div>
+
+    <script>
+        // --- 圖片檔案路徑設定 (PNG) ---
+        const DEMO_IMAGES = {
+            zh: './images/demo-zh.png',
+            en: './images/demo-en.png'
+        };
+
+        // --- 翻譯設定 ---
+        const translations = {
+            zh: {
+                title: 'NotebookLM 影片摘要轉簡報截圖工具',
+                subtitle: '專為 AI 筆記設計。自動過濾重複畫面，一鍵擷取最清晰的簡報截圖，完美搭配 NotebookLM 使用。',
+                dropzoneTitle: '點擊或拖放影片檔案',
+                dropzoneSubtitle: '支援 MP4, MOV, WebM (建議 < 500MB)',
+                selectVideoBtn: '開始處理影片',
+                guideTitle: '使用說明',
+                step1Title: '上傳影片',
+                step1Desc: '選擇您的課程或演講影片，系統將在本地端處理，不會上傳伺服器。',
+                step2Title: '智能擷取',
+                step2Desc: '演算法自動偵測並過濾重複畫面，只保留關鍵投影片。',
+                step3Title: '一鍵匯出',
+                step3Desc: '支援匯出圖片包 (ZIP)、PDF 文件或 PowerPoint 簡報。',
+                demoCaption: '實際操作畫面預覽',
+                processingTitle: 'AI 正在分析影格...',
+                progressTextDefault: '(準備開始...)',
+                progressTextAnalyzing: '(已成功擷取 {count} 張關鍵畫面)', 
+                resultsTitle: '擷取完成',
+                resultsSubtitle: '成功辨識出 {count} 張不重複的簡報畫面',
+                selectAll: '全選',
+                deselectAll: '取消全選',
+                selectionCounter: '已選取 {count} 張',
+                resetBtn: '重置',
+                downloadZip: '下載圖片包 (ZIP)',
+                downloadPptx: '下載簡報 (PPTX)',
+                downloadPdf: '下載 PDF 文件',
+                slideLabel: 'Slide {number}',
+                preparing: '處理中...',
+                notifSuccess: '檔案已成功產生！',
+                notifErrorGeneric: '錯誤: {error}',
+                notifErrorPptxLibLoad: '網路連線異常，無法載入簡報模組。'
+            },
+            en: {
+                title: 'NotebookLM Video to Slides',
+                subtitle: 'Optimized for AI notebooks. Extract unique frames and export slides for NotebookLM seamlessly.',
+                dropzoneTitle: 'Drop Video File Here',
+                dropzoneSubtitle: 'Supports MP4, MOV, WebM (Rec < 500MB)',
+                selectVideoBtn: 'Start Processing',
+                guideTitle: 'HOW IT WORKS',
+                step1Title: 'Upload Video',
+                step1Desc: 'Select your video file. Processing is done locally in your browser.',
+                step2Title: 'Smart Capture',
+                step2Desc: 'Algorithms filter duplicates to keep only unique slides.',
+                step3Title: 'Export',
+                step3Desc: 'Download as Images (ZIP), PDF Document, or PowerPoint.',
+                demoCaption: 'Application Interface Preview',
+                processingTitle: 'Analyzing Frames...',
+                progressTextDefault: '(Starting...)',
+                progressTextAnalyzing: '(Captured {count} keyframes)', 
+                resultsTitle: 'Done',
+                resultsSubtitle: 'Found {count} unique slides',
+                selectAll: 'Select All',
+                deselectAll: 'Deselect All',
+                selectionCounter: '{count} Selected',
+                resetBtn: 'Reset',
+                downloadZip: 'Download ZIP',
+                downloadPptx: 'Download PPTX',
+                downloadPdf: 'Download PDF',
+                slideLabel: 'Slide {number}',
+                preparing: 'Working...',
+                notifSuccess: 'File generated successfully!',
+                notifErrorGeneric: 'Error: {error}',
+                notifErrorPptxLibLoad: 'Network error loading PPTX library.'
+            }
+        };
+
+        // --- DOM Elements ---
+        const dom = {
+            uploadDropzone: document.getElementById('upload-dropzone'), // Target the dropzone
+            uploadSection: document.getElementById('upload-section'),
+            guideSection: document.getElementById('guide-section'), 
+            processingSection: document.getElementById('processing-section'),
+            resultsSection: document.getElementById('results-section'),
+            videoUploadInput: document.getElementById('video-upload'),
+            progressRing: document.getElementById('progress-ring'),
+            progressText: document.getElementById('progress-text'),
+            progressPercent: document.getElementById('progress-percent'),
+            slidesGrid: document.getElementById('slides-grid'),
+            downloadZipBtn: document.getElementById('download-zip-btn'),
+            downloadPdfBtn: document.getElementById('download-pdf-btn'),
+            downloadPptxBtn: document.getElementById('download-pptx-btn'),
+            videoElement: document.getElementById('video-processor'),
+            canvasElement: document.getElementById('canvas-processor'),
+            selectAllBtn: document.getElementById('select-all-btn'),
+            selectionCounter: document.getElementById('selection-counter'),
+            resetBtn: document.getElementById('reset-btn'),
+            notificationBanner: document.getElementById('notification-banner'),
+            notificationMessage: document.getElementById('notification-message'),
+            notifIcon: document.getElementById('notif-icon'),
+            langSwitcher: document.getElementById('lang-switcher'),
+            demoImage: document.getElementById('demo-image')
+        };
+        const ctx = dom.canvasElement.getContext('2d', { willReadFrequently: true });
+
+        // --- State ---
+        let extractedSlidesDataUrls = [];
+        let isPptxGenJsLoaded = false;
+        let notificationTimeout;
+        let currentLang = 'zh';
+        const SIMILARITY_THRESHOLD = 0.99;
+        const PROCESS_INTERVAL_SECONDS = 0.5;
+
+        // --- Logic ---
+        function setLanguage(lang) {
+            if (!translations[lang]) return;
+            currentLang = lang;
+            document.documentElement.lang = lang === 'zh' ? 'zh-Hant' : 'en';
+
+            document.querySelectorAll('[data-key]').forEach(el => {
+                const key = el.dataset.key;
+                if (translations[lang][key]) {
+                    el.textContent = translations[lang][key];
+                }
+            });
+            
+            dom.langSwitcher.querySelectorAll('button').forEach(btn => {
+                const isActive = btn.dataset.lang === lang;
+                btn.className = isActive 
+                    ? "px-4 py-1.5 rounded-full text-xs font-bold transition-all bg-white text-indigo-600 shadow-sm"
+                    : "px-4 py-1.5 rounded-full text-xs font-bold transition-all text-slate-500 hover:text-indigo-500";
+            });
+
+            // Switch Demo Image
+            if(dom.demoImage) {
+                dom.demoImage.src = DEMO_IMAGES[lang];
+            }
+
+            updateSelectionState();
+        }
+
+        dom.langSwitcher.addEventListener('click', (e) => {
+            if(e.target.dataset.lang) setLanguage(e.target.dataset.lang);
+        });
+
+        function showNotification(message, isError = false) {
+            clearTimeout(notificationTimeout);
+            dom.notificationMessage.textContent = message;
+            dom.notifIcon.className = `w-2 h-2 rounded-full ${isError ? 'bg-red-500' : 'bg-green-400'}`;
+            dom.notificationBanner.classList.remove('hidden', 'translate-y-[-100%]');
+            dom.notificationBanner.classList.add('translate-y-0');
+            
+            notificationTimeout = setTimeout(() => {
+                dom.notificationBanner.classList.remove('translate-y-0');
+                dom.notificationBanner.classList.add('translate-y-[-100%]');
+                setTimeout(() => dom.notificationBanner.classList.add('hidden'), 300);
+            }, 3000);
+        }
+
+        function setProgress(percent) {
+            dom.progressPercent.textContent = `${percent}%`;
+            const circumference = 62.83;
+            const offset = circumference - (percent / 100) * circumference;
+            dom.progressRing.style.strokeDashoffset = offset;
+        }
+
+        function handleFileSelect(file) {
+            if (file && file.type.startsWith('video/')) {
+                const videoUrl = URL.createObjectURL(file);
+                dom.videoElement.src = videoUrl;
+                // Hide Upload and Guide sections
+                dom.uploadSection.classList.add('hidden');
+                dom.guideSection.classList.add('hidden'); 
+                
+                dom.processingSection.classList.remove('hidden');
+                dom.resultsSection.classList.add('hidden');
+                
+                extractedSlidesDataUrls = [];
+                dom.slidesGrid.innerHTML = '';
+                setProgress(0);
+
+                dom.videoElement.onloadedmetadata = async () => {
+                    await extractFrames();
+                };
+            }
+        }
+        
+        async function extractFrames() {
+            const duration = dom.videoElement.duration;
+            dom.videoElement.muted = true;
+            let lastFrameData = null;
+            let frameCount = 0;
+            
+            for (let time = 0; time < duration; time += PROCESS_INTERVAL_SECONDS) {
+                try {
+                    const percent = Math.round((time / duration) * 100);
+                    setProgress(percent);
+                    // Updated progress text without percentage in description
+                    dom.progressText.textContent = translations[currentLang].progressTextAnalyzing
+                        .replace('{count}', frameCount);
+                        
+                    await seekVideo(time);
+                    
+                    dom.canvasElement.width = dom.videoElement.videoWidth;
+                    dom.canvasElement.height = dom.videoElement.videoHeight;
+                    ctx.drawImage(dom.videoElement, 0, 0, dom.canvasElement.width, dom.canvasElement.height);
+                    
+                    const currentFrameData = getFrameImageData();
+                    let isNewSlide = !lastFrameData || compareFrames(lastFrameData, currentFrameData) < SIMILARITY_THRESHOLD;
+                    
+                    if (isNewSlide) {
+                        frameCount++;
+                        const dataUrl = dom.canvasElement.toDataURL('image/jpeg', 0.85); 
+                        extractedSlidesDataUrls.push(dataUrl);
+                        addSlideThumbnail(dataUrl, frameCount);
+                        lastFrameData = currentFrameData;
+                    }
+                } catch (error) {
+                    console.warn("Frame skip", error);
+                }
+            }
+            
+            dom.processingSection.classList.add('hidden');
+            dom.resultsSection.classList.remove('hidden');
+            
+            const checkboxes = dom.slidesGrid.querySelectorAll('.slide-checkbox');
+            checkboxes.forEach(cb => cb.checked = true);
+            updateSelectionState();
+        }
+
+        function seekVideo(time) {
+            return new Promise((resolve, reject) => {
+                const video = dom.videoElement;
+                const onSeeked = () => {
+                    video.removeEventListener('error', onError);
+                    resolve();
+                };
+                const onError = () => {
+                    video.removeEventListener('seeked', onSeeked);
+                    reject('Seek error');
+                };
+                video.addEventListener('seeked', onSeeked, { once: true });
+                video.addEventListener('error', onError, { once: true });
+                video.currentTime = time;
+            });
+        }
+        
+        function getFrameImageData() {
+            const compareWidth = 64; 
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = compareWidth;
+            tempCanvas.height = Math.round(compareWidth * (dom.canvasElement.height / dom.canvasElement.width));
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(dom.canvasElement, 0, 0, tempCanvas.width, tempCanvas.height);
+            return tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height).data;
+        }
+
+        function compareFrames(data1, data2) {
+            let diff = 0;
+            const len = data1.length;
+            for (let i = 0; i < len; i += 4) {
+                diff += Math.abs(data1[i] - data2[i]) + Math.abs(data1[i+1] - data2[i+1]) + Math.abs(data1[i+2] - data2[i+2]);
+            }
+            return 1 - (diff / (len * 0.75 * 255));
+        }
+
+        function addSlideThumbnail(dataUrl, number) {
+            const div = document.createElement('div');
+            div.className = 'slide-card group relative bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden cursor-pointer';
+            div.innerHTML = `
+                <div class="aspect-video w-full overflow-hidden bg-slate-100 relative">
+                    <img src="${dataUrl}" class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105">
+                    <div class="absolute inset-0 bg-indigo-900/0 group-hover:bg-indigo-900/10 transition-colors duration-300"></div>
+                    
+                    <div class="absolute top-2 left-2 bg-black/60 backdrop-blur-md text-white text-[10px] font-bold px-2 py-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+                        ${translations[currentLang].slideLabel.replace('{number}', number)}
+                    </div>
+
+                    <div class="absolute top-2 right-2">
+                         <div class="checkbox-circle w-6 h-6 rounded-full border-2 border-white/80 shadow-sm flex items-center justify-center transition-all bg-black/20">
+                             <svg class="w-4 h-4 text-white opacity-0 transform scale-50 transition-all check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
+                         </div>
+                    </div>
+                </div>
+                <input type="checkbox" data-index="${number - 1}" class="slide-checkbox hidden">
+            `;
+            
+            const checkbox = div.querySelector('.slide-checkbox');
+            const checkIcon = div.querySelector('.check-icon');
+            const checkCircle = div.querySelector('.checkbox-circle');
+
+            div.addEventListener('click', () => {
+                checkbox.checked = !checkbox.checked;
+                updateVisualState();
+                updateSelectionState();
+            });
+
+            function updateVisualState() {
+                if (checkbox.checked) {
+                    div.classList.add('selected', 'ring-2', 'ring-indigo-500', 'ring-offset-2');
+                    checkCircle.classList.remove('bg-black/20', 'border-white/80');
+                    checkCircle.classList.add('bg-indigo-500', 'border-indigo-500');
+                    checkIcon.classList.remove('opacity-0', 'scale-50');
+                    checkIcon.classList.add('opacity-100', 'scale-100');
+                } else {
+                    div.classList.remove('selected', 'ring-2', 'ring-indigo-500', 'ring-offset-2');
+                    checkCircle.classList.add('bg-black/20', 'border-white/80');
+                    checkCircle.classList.remove('bg-indigo-500', 'border-indigo-500');
+                    checkIcon.classList.add('opacity-0', 'scale-50');
+                    checkIcon.classList.remove('opacity-100', 'scale-100');
+                }
+            }
+            dom.slidesGrid.appendChild(div);
+        }
+
+        function updateSelectionState() {
+            const checkboxes = dom.slidesGrid.querySelectorAll('.slide-checkbox:checked');
+            const count = checkboxes.length;
+            const hasSelection = count > 0;
+            const allCheckboxes = dom.slidesGrid.querySelectorAll('.slide-checkbox');
+
+            document.getElementById('selection-counter').textContent = translations[currentLang].selectionCounter.replace('{count}', count);
+            
+            ['downloadZipBtn', 'downloadPdfBtn', 'downloadPptxBtn'].forEach(id => {
+                if(dom[id]) dom[id].disabled = !hasSelection;
+            });
+
+            const isAllSelected = count > 0 && count === allCheckboxes.length;
+            dom.selectAllBtn.textContent = translations[currentLang][isAllSelected ? 'deselectAll' : 'selectAll'];
+            
+            allCheckboxes.forEach(cb => {
+                const container = cb.closest('.slide-card');
+                const checkCircle = container.querySelector('.checkbox-circle');
+                const checkIcon = container.querySelector('.check-icon');
+                
+                 if (cb.checked) {
+                    container.classList.add('selected', 'ring-2', 'ring-indigo-500', 'ring-offset-2');
+                    checkCircle.classList.remove('bg-black/20', 'border-white/80');
+                    checkCircle.classList.add('bg-indigo-500', 'border-indigo-500');
+                    checkIcon.classList.remove('opacity-0', 'scale-50');
+                    checkIcon.classList.add('opacity-100', 'scale-100');
+                } else {
+                    container.classList.remove('selected', 'ring-2', 'ring-indigo-500', 'ring-offset-2');
+                    checkCircle.classList.add('bg-black/20', 'border-white/80');
+                    checkCircle.classList.remove('bg-indigo-500', 'border-indigo-500');
+                    checkIcon.classList.add('opacity-0', 'scale-50');
+                    checkIcon.classList.remove('opacity-100', 'scale-100');
+                }
+            });
+        }
+        
+        function getSelectedImageDataUrls() {
+            return Array.from(dom.slidesGrid.querySelectorAll('.slide-checkbox:checked'))
+                .map(cb => extractedSlidesDataUrls[parseInt(cb.dataset.index, 10)]);
+        }
+
+        // --- Exports ---
+        async function loadPptxLibrary() {
+            if (isPptxGenJsLoaded) return true;
+            const originalHtml = dom.downloadPptxBtn.innerHTML;
+            dom.downloadPptxBtn.innerHTML = `<div class="spinner w-4 h-4 mr-2 border-slate-400 border-t-orange-600"></div> ${translations[currentLang].preparing}`;
+            
+            try {
+                if (typeof PptxGenJS === 'undefined') {
+                    await new Promise((resolve, reject) => {
+                        const script = document.createElement('script');
+                        script.src = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js';
+                        script.onload = resolve;
+                        script.onerror = reject;
+                        document.body.appendChild(script);
+                    });
+                }
+                isPptxGenJsLoaded = true;
+                dom.downloadPptxBtn.innerHTML = originalHtml;
+                return true;
+            } catch (e) {
+                showNotification(translations[currentLang].notifErrorPptxLibLoad, true);
+                dom.downloadPptxBtn.innerHTML = originalHtml;
+                return false;
+            }
+        }
+
+        async function generatePptx() {
+            if (!await loadPptxLibrary()) return;
+            
+            const originalHtml = dom.downloadPptxBtn.innerHTML;
+            dom.downloadPptxBtn.innerHTML = `<div class="spinner w-4 h-4 mr-2 border-slate-400 border-t-orange-600"></div> ${translations[currentLang].generating}`;
+            
+            try {
+                const pres = new PptxGenJS();
+                pres.layout = 'LAYOUT_16x9';
+                getSelectedImageDataUrls().forEach(dataUrl => {
+                    pres.addSlide().addImage({ data: dataUrl, x: 0, y: 0, w: '100%', h: '100%' });
+                });
+                await pres.writeFile({ fileName: 'NotebookLM_Slides.pptx' });
+                showNotification(translations[currentLang].notifSuccess);
+            } catch (error) {
+                showNotification(translations[currentLang].notifErrorGeneric.replace('{error}', error.message), true);
+            } finally {
+                dom.downloadPptxBtn.innerHTML = originalHtml;
+            }
+        }
+
+        // --- Event Binding ---
+        // 1. File Input Change
+        dom.videoUploadInput.addEventListener('change', (e) => handleFileSelect(e.target.files[0]));
+        
+        // 2. Drag & Drop Handlers (NEW FIXED)
+        const dropZone = dom.uploadDropzone;
+        
+        // Prevent default drag behaviors
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, preventDefaults, false);
+            document.body.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults (e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        // Highlight drop area when item is dragged over it
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, highlight, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, unhighlight, false);
+        });
+
+        function highlight(e) {
+            dropZone.classList.add('drag-active');
+        }
+
+        function unhighlight(e) {
+            dropZone.classList.remove('drag-active');
+        }
+
+        // Handle dropped files
+        dropZone.addEventListener('drop', handleDrop, false);
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            handleFileSelect(files[0]);
+        }
+
+        // --- Other Events ---
+        dom.selectAllBtn.addEventListener('click', () => {
+            const checkboxes = dom.slidesGrid.querySelectorAll('.slide-checkbox');
+            const isAllSelected = Array.from(checkboxes).every(cb => cb.checked);
+            checkboxes.forEach(cb => { cb.checked = !isAllSelected; });
+            updateSelectionState();
+        });
+
+        dom.resetBtn.addEventListener('click', () => location.reload());
+
+        dom.downloadZipBtn.addEventListener('click', () => {
+            const zip = new JSZip();
+            getSelectedImageDataUrls().forEach((dataUrl, index) => {
+                zip.file(`slide_${(index + 1).toString().padStart(3, '0')}.jpg`, dataUrl.split(',')[1], { base64: true });
+            });
+            zip.generateAsync({ type: 'blob' }).then(content => {
+                saveAs(content, 'NotebookLM_Images.zip');
+                showNotification(translations[currentLang].notifSuccess);
+            });
+        });
+
+        dom.downloadPdfBtn.addEventListener('click', () => {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ orientation: 'landscape', unit: 'px', format: [1280, 720] });
+            getSelectedImageDataUrls().forEach((dataUrl, index) => {
+                if (index > 0) doc.addPage([1280, 720], 'landscape');
+                doc.addImage(dataUrl, 'JPEG', 0, 0, 1280, 720);
+            });
+            doc.save('NotebookLM_Slides.pdf');
+            showNotification(translations[currentLang].notifSuccess);
+        });
+
+        dom.downloadPptxBtn.addEventListener('click', generatePptx);
+
+        // Initialize
+        setLanguage('zh');
+    </script>
+</body>
+</html>
